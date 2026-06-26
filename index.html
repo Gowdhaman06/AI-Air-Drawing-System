@@ -4,20 +4,34 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Air Drawing</title>
+    
+    <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    
+    <!-- CSS -->
+    <link rel="stylesheet" href="static/css/style.css">
+    
+    <!-- MediaPipe Hands & Camera Utils -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 </head>
 <body>
     <div class="app-container">
-        <!-- Video Feed -->
-        <img id="video-feed" src="/video_feed" alt="Video Feed">
         
-        <!-- Drawing Canvas -->
-        <canvas id="drawing-canvas"></canvas>
+        <!-- Video Input (Hidden, used by CameraUtils) -->
+        <video id="input_video" style="display: none;"></video>
+        
+        <!-- Output Canvas for Video & Skeleton (Background) -->
+        <canvas id="output_canvas" class="fullscreen-layer"></canvas>
+
+        <!-- Drawing Canvas (Foreground) -->
+        <canvas id="drawing-canvas" class="fullscreen-layer"></canvas>
         
         <!-- Top Left: Mode Label -->
         <div class="glass-panel mode-label" id="mode-display">
-            <span class="pulse-dot"></span> Mode: <span id="current-mode">Waiting...</span>
+            <span class="pulse-dot"></span> Mode: <span id="current-mode">Loading AI...</span>
         </div>
 
         <!-- Bottom Left: Social Stats & Caption -->
@@ -67,7 +81,7 @@
                 </label>
                 <label class="toggle-row">
                     <span>Show Hand Skeleton</span>
-                    <input type="checkbox" id="toggle-skeleton">
+                    <input type="checkbox" id="toggle-skeleton" checked>
                 </label>
             </div>
 
@@ -82,6 +96,7 @@
         </div>
     </div>
 
-    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    <!-- Main JS logic -->
+    <script src="static/js/main.js"></script>
 </body>
 </html>

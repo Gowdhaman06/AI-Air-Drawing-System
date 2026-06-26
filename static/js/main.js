@@ -1,7 +1,11 @@
 document.addEventListener('DOMContentLoaded', () => {
-    const canvas = document.getElementById('drawing-canvas');
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    const video = document.getElementById('video-feed');
+    // DOM Elements
+    const videoElement = document.getElementById('input_video');
+    const outputCanvas = document.getElementById('output_canvas');
+    const outCtx = outputCanvas.getContext('2d');
+    
+    const drawingCanvas = document.getElementById('drawing-canvas');
+    const drawCtx = drawingCanvas.getContext('2d', { willReadFrequently: true });
     
     // UI Elements
     const modeDisplay = document.getElementById('current-mode');
@@ -23,40 +27,37 @@ document.addEventListener('DOMContentLoaded', () => {
     let lastGesture = 'none';
     let actionDebounce = false;
 
-    // Initialize Canvas Size
-    function resizeCanvas() {
-        // Save current canvas content
-        const dataUrl = canvas.toDataURL();
+    // Initialize Canvas Sizes
+    function resizeCanvases() {
+        const dataUrl = drawingCanvas.toDataURL(); // Save drawing
         
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
+        outputCanvas.width = window.innerWidth;
+        outputCanvas.height = window.innerHeight;
         
-        // Restore content
+        drawingCanvas.width = window.innerWidth;
+        drawingCanvas.height = window.innerHeight;
+        
+        // Restore drawing
         const img = new Image();
-        img.onload = () => {
-            ctx.drawImage(img, 0, 0);
-        };
+        img.onload = () => { drawCtx.drawImage(img, 0, 0); };
         img.src = dataUrl;
         
-        if(undoStack.length === 0) {
-            saveState(); // Initial blank state
-        }
+        if (undoStack.length === 0) saveState();
     }
     
-    window.addEventListener('resize', resizeCanvas);
-    resizeCanvas();
+    window.addEventListener('resize', resizeCanvases);
+    resizeCanvases();
 
-    // Setup Canvas context styles
-    function setupContext() {
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-        ctx.lineWidth = currentSize;
-        ctx.strokeStyle = currentColor;
-        ctx.shadowBlur = 15;
-        ctx.shadowColor = currentColor;
+    function setupDrawContext() {
+        drawCtx.lineCap = 'round';
+        drawCtx.lineJoin = 'round';
+        drawCtx.lineWidth = currentSize;
+        drawCtx.strokeStyle = currentColor;
+        drawCtx.shadowBlur = 15;
+        drawCtx.shadowColor = currentColor;
     }
 
-    // UI Event Listeners
+    // UI Listeners
     colorBtns.forEach(btn => {
         btn.addEventListener('click', () => {
             colorBtns.forEach(b => {
@@ -74,18 +75,6 @@ document.addEventListener('DOMContentLoaded', () => {
         sizeVal.textContent = currentSize;
     });
 
-    toggleCamera.addEventListener('change', (e) => {
-        video.style.opacity = e.target.checked ? '1' : '0';
-    });
-
-    toggleSkeleton.addEventListener('change', (e) => {
-        fetch('/config', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ show_skeleton: e.target.checked })
-        });
-    });
-
     document.getElementById('btn-undo').addEventListener('click', undo);
     document.getElementById('btn-redo').addEventListener('click', redo);
     document.getElementById('btn-clear').addEventListener('click', clearCanvas);
@@ -93,9 +82,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Canvas History
     function saveState() {
-        undoStack.push(canvas.toDataURL());
-        if (undoStack.length > 20) undoStack.shift(); // Max 20 history
-        redoStack = []; // Clear redo stack on new action
+        undoStack.push(drawingCanvas.toDataURL());
+        if (undoStack.length > 20) undoStack.shift();
+        redoStack = [];
     }
 
     function undo() {
@@ -104,7 +93,7 @@ document.addEventListener('DOMContentLoaded', () => {
             restoreState(undoStack[undoStack.length - 1]);
         } else if (undoStack.length === 1) {
             redoStack.push(undoStack.pop());
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawCtx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
         }
     }
 
@@ -119,27 +108,26 @@ document.addEventListener('DOMContentLoaded', () => {
     function restoreState(dataUrl) {
         const img = new Image();
         img.onload = () => {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.drawImage(img, 0, 0);
+            drawCtx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+            drawCtx.drawImage(img, 0, 0);
         };
         img.src = dataUrl;
     }
 
     function clearCanvas() {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        drawCtx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
         saveState();
     }
 
     function saveCanvas() {
-        // Create a temporary canvas with a black background to save
         const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = canvas.width;
-        tempCanvas.height = canvas.height;
+        tempCanvas.width = drawingCanvas.width;
+        tempCanvas.height = drawingCanvas.height;
         const tCtx = tempCanvas.getContext('2d');
         
         tCtx.fillStyle = '#0f0f13';
         tCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
-        tCtx.drawImage(canvas, 0, 0);
+        tCtx.drawImage(drawingCanvas, 0, 0);
 
         const link = document.createElement('a');
         link.download = 'ai-air-drawing.png';
@@ -147,73 +135,177 @@ document.addEventListener('DOMContentLoaded', () => {
         link.click();
     }
 
-    // Polling Loop
-    async function fetchLandmarks() {
-        try {
-            const res = await fetch('/landmarks');
-            const data = await res.json();
-            handleLandmarks(data);
-        } catch (e) {
-            // Ignore errors
-        }
-        requestAnimationFrame(fetchLandmarks);
-    }
+    // Initialize MediaPipe Hands
+    const hands = new Hands({locateFile: (file) => {
+        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+    }});
 
-    function handleLandmarks(data) {
-        const { x, y, gesture } = data;
+    hands.setOptions({
+        maxNumHands: 1,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.7,
+        minTrackingConfidence: 0.7
+    });
+
+    hands.onResults(onResults);
+
+    // Setup Camera
+    const camera = new Camera(videoElement, {
+        onFrame: async () => {
+            await hands.send({image: videoElement});
+        },
+        width: 1280,
+        height: 720
+    });
+    camera.start();
+
+    // Frame Processing
+    function onResults(results) {
+        outCtx.save();
+        outCtx.clearRect(0, 0, outputCanvas.width, outputCanvas.height);
         
-        // Convert normalized coords to screen space
-        // Note: x is flipped in video feed usually, but we handle it assuming backend already flipped the frame
-        const screenX = x * canvas.width;
-        const screenY = y * canvas.height;
-        const currentPoint = { x: screenX, y: screenY };
+        // Mirror the image
+        outCtx.translate(outputCanvas.width, 0);
+        outCtx.scale(-1, 1);
+        
+        // Draw camera feed
+        if (toggleCamera.checked) {
+            // Fill entire canvas while preserving aspect ratio
+            const videoAspect = results.image.width / results.image.height;
+            const canvasAspect = outputCanvas.width / outputCanvas.height;
+            let drawWidth, drawHeight, offsetX, offsetY;
 
-        // Update Mode Display
-        if(gesture === 'draw') modeDisplay.textContent = 'Draw 🖌️';
-        else if(gesture === 'erase') modeDisplay.textContent = 'Move/Erase 🖐️';
-        else if(gesture === 'action') modeDisplay.textContent = 'Action 👍';
-        else modeDisplay.textContent = 'Waiting...';
-
-        // Action Trigger
-        if (gesture === 'action' && lastGesture !== 'action' && !actionDebounce) {
-            actionDebounce = true;
-            saveCanvas();
-            setTimeout(() => { actionDebounce = false; }, 2000); // debounce 2s
+            if (canvasAspect > videoAspect) {
+                drawWidth = outputCanvas.width;
+                drawHeight = outputCanvas.width / videoAspect;
+                offsetX = 0;
+                offsetY = (outputCanvas.height - drawHeight) / 2;
+            } else {
+                drawHeight = outputCanvas.height;
+                drawWidth = outputCanvas.height * videoAspect;
+                offsetX = (outputCanvas.width - drawWidth) / 2;
+                offsetY = 0;
+            }
+            
+            outCtx.drawImage(results.image, offsetX, offsetY, drawWidth, drawHeight);
         }
 
-        // Draw Logic
-        if (gesture === 'draw') {
-            if (!isDrawing) {
-                isDrawing = true;
-                lastPoint = currentPoint;
-                previousPoint = currentPoint;
-            } else {
-                setupContext();
-                ctx.beginPath();
-                
-                // Quadratic bezier for smoothness
-                const midPoint = {
-                    x: (lastPoint.x + currentPoint.x) / 2,
-                    y: (lastPoint.y + currentPoint.y) / 2
-                };
-                
-                ctx.moveTo(previousPoint.x, previousPoint.y);
-                ctx.quadraticCurveTo(lastPoint.x, lastPoint.y, midPoint.x, midPoint.y);
-                ctx.stroke();
+        // Process landmarks
+        let gesture = 'none';
+        
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            const landmarks = results.multiHandLandmarks[0];
+            
+            // Draw skeleton
+            if (toggleSkeleton.checked) {
+                // Since we flipped the context, drawing_utils will draw it correctly matched to the mirrored video
+                drawConnectors(outCtx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 2});
+                drawLandmarks(outCtx, landmarks, {color: '#FF0000', lineWidth: 1, radius: 2});
+            }
 
-                previousPoint = midPoint;
-                lastPoint = currentPoint;
+            // Finger Tips and MCPs
+            const thumb_tip = landmarks[4];
+            const index_tip = landmarks[8];
+            const middle_tip = landmarks[12];
+            const ring_tip = landmarks[16];
+            const pinky_tip = landmarks[20];
+            
+            const thumb_mcp = landmarks[2];
+            const index_mcp = landmarks[5];
+            const middle_mcp = landmarks[9];
+            const ring_mcp = landmarks[13];
+            const pinky_mcp = landmarks[17];
+
+            // Heuristics (y is 0 at top, 1 at bottom)
+            const index_up = index_tip.y < index_mcp.y;
+            const middle_up = middle_tip.y < middle_mcp.y;
+            const ring_up = ring_tip.y < ring_mcp.y;
+            const pinky_up = pinky_tip.y < pinky_mcp.y;
+            
+            const thumb_up = thumb_tip.y < index_mcp.y && !index_up && !middle_up && !ring_up && !pinky_up;
+
+            if (thumb_up) gesture = 'action';
+            else if (index_up && middle_up && ring_up && pinky_up) gesture = 'erase';
+            else if (index_up && !pinky_up) gesture = 'draw';
+
+            // Coordinates for drawing (Index finger tip)
+            // Need to calculate screen position based on object-fit 'cover' scaling
+            const videoAspect = results.image.width / results.image.height;
+            const canvasAspect = outputCanvas.width / outputCanvas.height;
+            let drawWidth, drawHeight, offsetX, offsetY;
+
+            if (canvasAspect > videoAspect) {
+                drawWidth = outputCanvas.width;
+                drawHeight = outputCanvas.width / videoAspect;
+                offsetX = 0;
+                offsetY = (outputCanvas.height - drawHeight) / 2;
+            } else {
+                drawHeight = outputCanvas.height;
+                drawWidth = outputCanvas.height * videoAspect;
+                offsetX = (outputCanvas.width - drawWidth) / 2;
+                offsetY = 0;
+            }
+
+            // x coordinate needs mirroring
+            const x = 1.0 - index_tip.x;
+            const y = index_tip.y;
+            
+            const screenX = offsetX + (x * drawWidth);
+            const screenY = offsetY + (y * drawHeight);
+            
+            const currentPoint = { x: screenX, y: screenY };
+
+            // Handle Action Trigger
+            if (gesture === 'action' && lastGesture !== 'action' && !actionDebounce) {
+                actionDebounce = true;
+                saveCanvas();
+                setTimeout(() => { actionDebounce = false; }, 2000);
+            }
+
+            // Handle Drawing
+            if (gesture === 'draw') {
+                if (!isDrawing) {
+                    isDrawing = true;
+                    lastPoint = currentPoint;
+                    previousPoint = currentPoint;
+                } else {
+                    setupDrawContext();
+                    drawCtx.beginPath();
+                    
+                    const midPoint = {
+                        x: (lastPoint.x + currentPoint.x) / 2,
+                        y: (lastPoint.y + currentPoint.y) / 2
+                    };
+                    
+                    drawCtx.moveTo(previousPoint.x, previousPoint.y);
+                    drawCtx.quadraticCurveTo(lastPoint.x, lastPoint.y, midPoint.x, midPoint.y);
+                    drawCtx.stroke();
+
+                    previousPoint = midPoint;
+                    lastPoint = currentPoint;
+                }
+            } else {
+                if (isDrawing) {
+                    isDrawing = false;
+                    saveState();
+                }
             }
         } else {
+            // No hands detected
             if (isDrawing) {
                 isDrawing = false;
                 saveState();
             }
         }
+        
+        outCtx.restore();
 
+        // Update UI
+        if(gesture === 'draw') modeDisplay.textContent = 'Draw 🖌️';
+        else if(gesture === 'erase') modeDisplay.textContent = 'Move/Erase 🖐️';
+        else if(gesture === 'action') modeDisplay.textContent = 'Action 👍';
+        else modeDisplay.textContent = 'Waiting...';
+        
         lastGesture = gesture;
     }
-
-    // Start Polling
-    fetchLandmarks();
 });

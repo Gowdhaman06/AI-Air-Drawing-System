@@ -28,27 +28,26 @@ body {
     display: flex;
 }
 
-/* Background Video */
-#video-feed {
+/* Fullscreen layers */
+.fullscreen-layer {
     position: absolute;
     top: 0;
     left: 0;
     width: 100%;
     height: 100%;
-    object-fit: cover;
+}
+
+/* Background Canvas (Video & Skeleton) */
+#output_canvas {
     z-index: 1;
+    object-fit: cover;
     transition: opacity 0.3s ease;
 }
 
-/* Canvas Layer */
+/* Canvas Layer (Drawing) */
 #drawing-canvas {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
     z-index: 2;
-    pointer-events: none; /* Let clicks pass through if needed, though we track via webcam */
+    pointer-events: none;
 }
 
 /* Glassmorphism Panels */

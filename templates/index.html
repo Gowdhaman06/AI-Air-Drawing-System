@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Air Drawing</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Video Feed -->
+        <img id="video-feed" src="/video_feed" alt="Video Feed">
+        
+        <!-- Drawing Canvas -->
+        <canvas id="drawing-canvas"></canvas>
+        
+        <!-- Top Left: Mode Label -->
+        <div class="glass-panel mode-label" id="mode-display">
+            <span class="pulse-dot"></span> Mode: <span id="current-mode">Waiting...</span>
+        </div>
+
+        <!-- Bottom Left: Social Stats & Caption -->
+        <div class="bottom-left-panel">
+            <div class="demo-caption">
+                <span class="multicolor-text">Welcome</span>
+            </div>
+            <div class="social-stats glass-panel">
+                <div class="stat"><span class="icon">❤️</span> 12.4k</div>
+                <div class="stat"><span class="icon">💬</span> 842</div>
+            </div>
+        </div>
+
+        <!-- Right: Floating Toolbar -->
+        <div class="toolbar glass-panel">
+            <h3>🖌️ Tools</h3>
+            
+            <div class="tool-section">
+                <label>Color</label>
+                <div class="color-swatches" id="color-picker">
+                    <button class="color-btn active" data-color="#ff2a2a" style="background: #ff2a2a; box-shadow: 0 0 10px #ff2a2a;"></button>
+                    <button class="color-btn" data-color="#ff7f00" style="background: #ff7f00;"></button>
+                    <button class="color-btn" data-color="#ffd700" style="background: #ffd700;"></button>
+                    <button class="color-btn" data-color="#00ff00" style="background: #00ff00;"></button>
+                    <button class="color-btn" data-color="#00ffff" style="background: #00ffff;"></button>
+                    <button class="color-btn" data-color="#aa00ff" style="background: #aa00ff;"></button>
+                    <button class="color-btn" data-color="#ffffff" style="background: #ffffff;"></button>
+                </div>
+            </div>
+
+            <div class="tool-section">
+                <label>Brush Size (<span id="size-val">5</span>px)</label>
+                <input type="range" id="brush-size" min="2" max="30" value="5">
+            </div>
+
+            <div class="tool-section action-buttons">
+                <button id="btn-undo" class="action-btn">↺ Undo</button>
+                <button id="btn-redo" class="action-btn">↻ Redo</button>
+                <button id="btn-clear" class="action-btn clear-btn">🗑️ Clear</button>
+                <button id="btn-save" class="action-btn save-btn">💾 Save PNG</button>
+            </div>
+
+            <div class="tool-section toggles">
+                <label class="toggle-row">
+                    <span>Show Camera Feed</span>
+                    <input type="checkbox" id="toggle-camera" checked>
+                </label>
+                <label class="toggle-row">
+                    <span>Show Hand Skeleton</span>
+                    <input type="checkbox" id="toggle-skeleton">
+                </label>
+            </div>
+
+            <div class="gesture-guide">
+                <h4>Gesture Guide</h4>
+                <ul>
+                    <li>☝️ <b>Draw:</b> Index Up</li>
+                    <li>🖐️ <b>Move/Erase:</b> Open Hand</li>
+                    <li>👍 <b>Action:</b> Thumb Up (Save)</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>

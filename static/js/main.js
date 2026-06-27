@@ -19,6 +19,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentColor = '#ff2a2a';
     let currentSize = 5;
     let isDrawing = false;
+    let isErasing = false;
     let lastPoint = null;
     let previousPoint = null;
     
@@ -135,6 +136,63 @@ document.addEventListener('DOMContentLoaded', () => {
         link.click();
     }
 
+    // Helper: check if a finger is extended
+    function isFingerUp(landmarks, tipIdx, pipIdx) {
+        return landmarks[tipIdx].y < landmarks[pipIdx].y;
+    }
+
+    function isThumbUp(landmarks) {
+        // For right hand: thumb tip x > thumb ip x (pointing right/up)
+        // For left hand it's the opposite — but since we mirror the video, 
+        // we use a simpler heuristic: thumb tip is significantly above thumb IP
+        const thumbTip = landmarks[4];
+        const thumbIP = landmarks[3];
+        const thumbMCP = landmarks[2];
+        // Thumb is up if the tip is above its IP joint
+        return thumbTip.y < thumbIP.y && thumbTip.y < thumbMCP.y;
+    }
+
+    function countFingersUp(landmarks) {
+        let count = 0;
+        if (isFingerUp(landmarks, 8, 6)) count++;   // Index
+        if (isFingerUp(landmarks, 12, 10)) count++;  // Middle
+        if (isFingerUp(landmarks, 16, 14)) count++;  // Ring
+        if (isFingerUp(landmarks, 20, 18)) count++;  // Pinky
+        return count;
+    }
+
+    function detectGesture(landmarks) {
+        const indexUp = isFingerUp(landmarks, 8, 6);
+        const middleUp = isFingerUp(landmarks, 12, 10);
+        const ringUp = isFingerUp(landmarks, 16, 14);
+        const pinkyUp = isFingerUp(landmarks, 20, 18);
+        const thumbUp = isThumbUp(landmarks);
+
+        const fingersUp = countFingersUp(landmarks);
+
+        // Thumb up gesture: thumb extended, all other fingers closed
+        if (thumbUp && fingersUp === 0) {
+            return 'action';
+        }
+
+        // Erase: 3 or more fingers up (open hand / spread fingers)
+        if (fingersUp >= 3) {
+            return 'erase';
+        }
+
+        // Move: exactly 2 fingers up (index + middle like a peace sign)
+        if (fingersUp === 2 && indexUp && middleUp) {
+            return 'move';
+        }
+
+        // Draw: only index finger up
+        if (indexUp && fingersUp === 1) {
+            return 'draw';
+        }
+
+        return 'none';
+    }
+
     // Initialize MediaPipe Hands
     const hands = new Hands({locateFile: (file) => {
         return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
@@ -143,8 +201,8 @@ document.addEventListener('DOMContentLoaded', () => {
     hands.setOptions({
         maxNumHands: 1,
         modelComplexity: 1,
-        minDetectionConfidence: 0.7,
-        minTrackingConfidence: 0.7
+        minDetectionConfidence: 0.6,
+        minTrackingConfidence: 0.6
     });
 
     hands.onResults(onResults);
@@ -170,7 +228,6 @@ document.addEventListener('DOMContentLoaded', () => {
         
         // Draw camera feed
         if (toggleCamera.checked) {
-            // Fill entire canvas while preserving aspect ratio
             const videoAspect = results.image.width / results.image.height;
             const canvasAspect = outputCanvas.width / outputCanvas.height;
             let drawWidth, drawHeight, offsetX, offsetY;
@@ -198,39 +255,14 @@ document.addEventListener('DOMContentLoaded', () => {
             
             // Draw skeleton
             if (toggleSkeleton.checked) {
-                // Since we flipped the context, drawing_utils will draw it correctly matched to the mirrored video
                 drawConnectors(outCtx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 2});
-                drawLandmarks(outCtx, landmarks, {color: '#FF0000', lineWidth: 1, radius: 2});
+                drawLandmarks(outCtx, landmarks, {color: '#FF0000', lineWidth: 1, radius: 3});
             }
 
-            // Finger Tips and MCPs
-            const thumb_tip = landmarks[4];
-            const index_tip = landmarks[8];
-            const middle_tip = landmarks[12];
-            const ring_tip = landmarks[16];
-            const pinky_tip = landmarks[20];
-            
-            const thumb_mcp = landmarks[2];
-            const index_mcp = landmarks[5];
-            const middle_mcp = landmarks[9];
-            const ring_mcp = landmarks[13];
-            const pinky_mcp = landmarks[17];
+            // Detect gesture using robust helper
+            gesture = detectGesture(landmarks);
 
-            // Heuristics (y is 0 at top, 1 at bottom)
-            const index_up = index_tip.y < index_mcp.y;
-            const middle_up = middle_tip.y < middle_mcp.y;
-            const ring_up = ring_tip.y < ring_mcp.y;
-            const pinky_up = pinky_tip.y < pinky_mcp.y;
-            
-            const thumb_up = thumb_tip.y < index_mcp.y && !index_up && !middle_up && !ring_up && !pinky_up;
-
-            if (thumb_up) gesture = 'action';
-            else if (index_up && middle_up && ring_up && pinky_up) gesture = 'erase';
-            else if (index_up && middle_up && !ring_up && !pinky_up) gesture = 'move';
-            else if (index_up && !middle_up && !ring_up && !pinky_up) gesture = 'draw';
-
-            // Coordinates for drawing (Index finger tip)
-            // Need to calculate screen position based on object-fit 'cover' scaling
+            // Calculate screen coordinates from index fingertip
             const videoAspect = results.image.width / results.image.height;
             const canvasAspect = outputCanvas.width / outputCanvas.height;
             let drawWidth, drawHeight, offsetX, offsetY;
@@ -247,46 +279,38 @@ document.addEventListener('DOMContentLoaded', () => {
                 offsetY = 0;
             }
 
-            // x coordinate needs mirroring
-            const x = 1.0 - index_tip.x;
-            const y = index_tip.y;
+            // Mirror x coordinate
+            const x = 1.0 - landmarks[8].x;
+            const y = landmarks[8].y;
             
             const screenX = offsetX + (x * drawWidth);
             const screenY = offsetY + (y * drawHeight);
             
             const currentPoint = { x: screenX, y: screenY };
 
-            // Handle Action Trigger
+            // Handle Action Trigger (thumb up = save)
             if (gesture === 'action' && lastGesture !== 'action' && !actionDebounce) {
                 actionDebounce = true;
                 saveCanvas();
                 setTimeout(() => { actionDebounce = false; }, 2000);
             }
 
-            // Handle Drawing and Erasing
-            if (gesture === 'draw' || gesture === 'erase') {
+            // Handle Drawing
+            if (gesture === 'draw') {
                 if (!isDrawing) {
                     isDrawing = true;
+                    isErasing = false;
                     lastPoint = currentPoint;
                     previousPoint = currentPoint;
                 } else {
                     setupDrawContext();
-                    
-                    if (gesture === 'erase') {
-                        drawCtx.globalCompositeOperation = 'destination-out';
-                        drawCtx.lineWidth = currentSize * 3;
-                        drawCtx.shadowBlur = 0;
-                    } else {
-                        drawCtx.globalCompositeOperation = 'source-over';
-                    }
+                    drawCtx.globalCompositeOperation = 'source-over';
                     
                     drawCtx.beginPath();
-                    
                     const midPoint = {
                         x: (lastPoint.x + currentPoint.x) / 2,
                         y: (lastPoint.y + currentPoint.y) / 2
                     };
-                    
                     drawCtx.moveTo(previousPoint.x, previousPoint.y);
                     drawCtx.quadraticCurveTo(lastPoint.x, lastPoint.y, midPoint.x, midPoint.y);
                     drawCtx.stroke();
@@ -294,28 +318,64 @@ document.addEventListener('DOMContentLoaded', () => {
                     previousPoint = midPoint;
                     lastPoint = currentPoint;
                 }
-            } else {
-                if (isDrawing) {
+            }
+            // Handle Erasing
+            else if (gesture === 'erase') {
+                if (!isErasing) {
+                    isErasing = true;
                     isDrawing = false;
+                    lastPoint = currentPoint;
+                    previousPoint = currentPoint;
+                } else {
+                    drawCtx.globalCompositeOperation = 'destination-out';
+                    drawCtx.lineCap = 'round';
+                    drawCtx.lineJoin = 'round';
+                    drawCtx.lineWidth = currentSize * 5; // Large eraser
+                    drawCtx.shadowBlur = 0;
+                    
+                    drawCtx.beginPath();
+                    const midPoint = {
+                        x: (lastPoint.x + currentPoint.x) / 2,
+                        y: (lastPoint.y + currentPoint.y) / 2
+                    };
+                    drawCtx.moveTo(previousPoint.x, previousPoint.y);
+                    drawCtx.quadraticCurveTo(lastPoint.x, lastPoint.y, midPoint.x, midPoint.y);
+                    drawCtx.stroke();
+
+                    previousPoint = midPoint;
+                    lastPoint = currentPoint;
+                }
+            }
+            // Move or other gestures — stop drawing/erasing
+            else {
+                if (isDrawing || isErasing) {
+                    isDrawing = false;
+                    isErasing = false;
                     drawCtx.globalCompositeOperation = 'source-over';
                     saveState();
                 }
+                lastPoint = null;
+                previousPoint = null;
             }
         } else {
-            // No hands detected
-            if (isDrawing) {
+            // No hands detected — stop everything
+            if (isDrawing || isErasing) {
                 isDrawing = false;
+                isErasing = false;
+                drawCtx.globalCompositeOperation = 'source-over';
                 saveState();
             }
+            lastPoint = null;
+            previousPoint = null;
         }
         
         outCtx.restore();
 
-        // Update UI
-        if(gesture === 'draw') modeDisplay.textContent = 'Draw 🖌️';
-        else if(gesture === 'erase') modeDisplay.textContent = 'Erase 🧽';
-        else if(gesture === 'move') modeDisplay.textContent = 'Move 🖐️';
-        else if(gesture === 'action') modeDisplay.textContent = 'Action 👍';
+        // Update UI mode label
+        if (gesture === 'draw') modeDisplay.textContent = 'Draw 🖌️';
+        else if (gesture === 'erase') modeDisplay.textContent = 'Erase 🧽';
+        else if (gesture === 'move') modeDisplay.textContent = 'Move ✌️';
+        else if (gesture === 'action') modeDisplay.textContent = 'Action 👍';
         else modeDisplay.textContent = 'Waiting...';
         
         lastGesture = gesture;

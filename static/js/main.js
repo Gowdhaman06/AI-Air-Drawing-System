@@ -235,6 +235,49 @@ document.addEventListener('DOMContentLoaded', () => {
         outCtx.restore();
     }
 
+    // Draw palm-shaped cursor for erase mode
+    function drawPalmCursor(palmPoints, allPoints) {
+        outCtx.save();
+        outCtx.setTransform(1, 0, 0, 1, 0, 0);
+
+        // Draw palm outline polygon
+        if (palmPoints.length > 2) {
+            outCtx.beginPath();
+            outCtx.moveTo(palmPoints[0].x, palmPoints[0].y);
+            for (let i = 1; i < palmPoints.length; i++) {
+                outCtx.lineTo(palmPoints[i].x, palmPoints[i].y);
+            }
+            outCtx.closePath();
+            outCtx.strokeStyle = '#ff4444';
+            outCtx.lineWidth = 2;
+            outCtx.shadowBlur = 15;
+            outCtx.shadowColor = '#ff4444';
+            outCtx.stroke();
+            outCtx.fillStyle = 'rgba(255, 68, 68, 0.15)';
+            outCtx.fill();
+        }
+
+        // Draw circles at each landmark
+        for (let i = 0; i < allPoints.length; i++) {
+            outCtx.beginPath();
+            outCtx.arc(allPoints[i].x, allPoints[i].y, 25, 0, Math.PI * 2);
+            outCtx.strokeStyle = 'rgba(255, 68, 68, 0.4)';
+            outCtx.lineWidth = 1;
+            outCtx.stroke();
+        }
+
+        // Label
+        const centerX = allPoints.reduce((s, p) => s + p.x, 0) / allPoints.length;
+        const centerY = allPoints.reduce((s, p) => s + p.y, 0) / allPoints.length;
+        outCtx.font = '16px Outfit';
+        outCtx.fillStyle = '#ff4444';
+        outCtx.textAlign = 'center';
+        outCtx.textBaseline = 'middle';
+        outCtx.fillText('ERASING', centerX, centerY);
+
+        outCtx.restore();
+    }
+
     // ─── MEDIAPIPE SETUP ───
 
     const hands = new Hands({locateFile: (file) => {
@@ -261,7 +304,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ─── COORDINATE CALCULATION ───
 
-    function getScreenCoords(landmarks, results) {
+    function getVideoMapping(results) {
         const videoAspect = results.image.width / results.image.height;
         const canvasAspect = outputCanvas.width / outputCanvas.height;
         let drawWidth, drawHeight, offsetX, offsetY;
@@ -278,14 +321,38 @@ document.addEventListener('DOMContentLoaded', () => {
             offsetY = 0;
         }
 
-        // Mirror x for selfie view
-        const x = 1.0 - landmarks[8].x;
-        const y = landmarks[8].y;
-        
+        return { drawWidth, drawHeight, offsetX, offsetY };
+    }
+
+    function landmarkToScreen(landmark, mapping) {
+        const x = 1.0 - landmark.x; // Mirror x for selfie view
+        const y = landmark.y;
         return {
-            x: offsetX + (x * drawWidth),
-            y: offsetY + (y * drawHeight)
+            x: mapping.offsetX + (x * mapping.drawWidth),
+            y: mapping.offsetY + (y * mapping.drawHeight)
         };
+    }
+
+    function getScreenCoords(landmarks, results) {
+        const mapping = getVideoMapping(results);
+        return landmarkToScreen(landmarks[8], mapping);
+    }
+
+    // Get screen coordinates for ALL 21 hand landmarks
+    function getAllLandmarkScreenCoords(landmarks, results) {
+        const mapping = getVideoMapping(results);
+        return landmarks.map(lm => landmarkToScreen(lm, mapping));
+    }
+
+    // Get the palm outline points (convex hull of key landmarks)
+    // Uses: wrist(0), thumb_cmc(1), thumb_mcp(2), thumb_tip(4),
+    //       index_mcp(5), index_tip(8), middle_mcp(9), middle_tip(12),
+    //       ring_mcp(13), ring_tip(16), pinky_mcp(17), pinky_tip(20)
+    function getPalmErasePoints(landmarks, results) {
+        const mapping = getVideoMapping(results);
+        // Outer boundary of the hand for polygon fill
+        const palmIndices = [0, 1, 2, 3, 4, 8, 12, 16, 20, 17, 13, 9, 5, 0];
+        return palmIndices.map(i => landmarkToScreen(landmarks[i], mapping));
     }
 
     // ─── STOP ACTIVE MODES ───
@@ -351,9 +418,15 @@ document.addEventListener('DOMContentLoaded', () => {
             gesture = detectGesture(landmarks);
             const coords = getScreenCoords(landmarks, results);
             const currentPoint = { x: coords.x, y: coords.y };
+            const allPoints = getAllLandmarkScreenCoords(landmarks, results);
+            const palmPoints = getPalmErasePoints(landmarks, results);
 
             // Draw cursor indicator
-            drawCursor(currentPoint.x, currentPoint.y, gesture);
+            if (gesture === 'erase') {
+                drawPalmCursor(palmPoints, allPoints);
+            } else {
+                drawCursor(currentPoint.x, currentPoint.y, gesture);
+            }
 
             // ── HANDLE ACTION (Thumb Up = Save)
             if (gesture === 'action' && lastGesture !== 'action' && !actionDebounce) {
@@ -384,27 +457,54 @@ document.addEventListener('DOMContentLoaded', () => {
                     lastPoint = currentPoint;
                 }
             }
-            // ── HANDLE ERASE (Open hand - wipes strokes away)
+            // ── HANDLE ERASE (Open hand - whole palm wipes strokes)
             else if (gesture === 'erase') {
                 if (isDrawing || isMoving) stopAllModes();
-                
-                if (!isErasing) {
-                    isErasing = true;
-                    lastPoint = currentPoint;
-                    previousPoint = currentPoint;
-                } else {
-                    const eraseRadius = currentSize * 3;
-                    // Clear a circular area around the finger
-                    drawCtx.save();
-                    drawCtx.globalCompositeOperation = 'destination-out';
+                isErasing = true;
+
+                drawCtx.save();
+                drawCtx.globalCompositeOperation = 'destination-out';
+
+                // 1. Fill the palm polygon to erase everything under the hand
+                if (palmPoints.length > 2) {
                     drawCtx.beginPath();
-                    drawCtx.arc(currentPoint.x, currentPoint.y, eraseRadius, 0, Math.PI * 2);
+                    drawCtx.moveTo(palmPoints[0].x, palmPoints[0].y);
+                    for (let i = 1; i < palmPoints.length; i++) {
+                        drawCtx.lineTo(palmPoints[i].x, palmPoints[i].y);
+                    }
+                    drawCtx.closePath();
                     drawCtx.fill();
-                    drawCtx.restore();
-                    
-                    lastPoint = currentPoint;
-                    previousPoint = currentPoint;
                 }
+
+                // 2. Also erase circles at ALL 21 landmark points for full coverage
+                const eraseRadius = 25;
+                for (let i = 0; i < allPoints.length; i++) {
+                    drawCtx.beginPath();
+                    drawCtx.arc(allPoints[i].x, allPoints[i].y, eraseRadius, 0, Math.PI * 2);
+                    drawCtx.fill();
+                }
+
+                // 3. Erase along finger lines (between joints) for gaps
+                const fingerChains = [
+                    [0, 5, 6, 7, 8],     // index
+                    [0, 9, 10, 11, 12],   // middle
+                    [0, 13, 14, 15, 16],  // ring
+                    [0, 17, 18, 19, 20],  // pinky
+                    [0, 1, 2, 3, 4]       // thumb
+                ];
+                drawCtx.lineWidth = eraseRadius * 2;
+                drawCtx.lineCap = 'round';
+                drawCtx.lineJoin = 'round';
+                for (const chain of fingerChains) {
+                    drawCtx.beginPath();
+                    drawCtx.moveTo(allPoints[chain[0]].x, allPoints[chain[0]].y);
+                    for (let j = 1; j < chain.length; j++) {
+                        drawCtx.lineTo(allPoints[chain[j]].x, allPoints[chain[j]].y);
+                    }
+                    drawCtx.stroke();
+                }
+
+                drawCtx.restore();
             }
             // ── HANDLE MOVE (Peace sign - drags entire drawing)
             else if (gesture === 'move') {

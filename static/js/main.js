@@ -225,8 +225,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const thumb_up = thumb_tip.y < index_mcp.y && !index_up && !middle_up && !ring_up && !pinky_up;
 
             if (thumb_up) gesture = 'action';
-            else if (index_up && middle_up && ring_up && pinky_up) gesture = 'move';
-            else if (index_up && middle_up && !ring_up && !pinky_up) gesture = 'erase';
+            else if (index_up && middle_up && ring_up && pinky_up) gesture = 'erase';
+            else if (index_up && middle_up && !ring_up && !pinky_up) gesture = 'move';
             else if (index_up && !middle_up && !ring_up && !pinky_up) gesture = 'draw';
 
             // Coordinates for drawing (Index finger tip)

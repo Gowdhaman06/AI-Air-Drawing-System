@@ -20,8 +20,10 @@ document.addEventListener('DOMContentLoaded', () => {
     let currentSize = 5;
     let isDrawing = false;
     let isErasing = false;
+    let isMoving = false;
     let lastPoint = null;
     let previousPoint = null;
+    let moveAnchor = null; // For tracking move deltas
     
     let undoStack = [];
     let redoStack = [];
@@ -30,7 +32,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Initialize Canvas Sizes
     function resizeCanvases() {
-        const dataUrl = drawingCanvas.toDataURL(); // Save drawing
+        const dataUrl = drawingCanvas.toDataURL();
         
         outputCanvas.width = window.innerWidth;
         outputCanvas.height = window.innerHeight;
@@ -38,7 +40,6 @@ document.addEventListener('DOMContentLoaded', () => {
         drawingCanvas.width = window.innerWidth;
         drawingCanvas.height = window.innerHeight;
         
-        // Restore drawing
         const img = new Image();
         img.onload = () => { drawCtx.drawImage(img, 0, 0); };
         img.src = dataUrl;
@@ -56,6 +57,7 @@ document.addEventListener('DOMContentLoaded', () => {
         drawCtx.strokeStyle = currentColor;
         drawCtx.shadowBlur = 15;
         drawCtx.shadowColor = currentColor;
+        drawCtx.globalCompositeOperation = 'source-over';
     }
 
     // UI Listeners
@@ -84,7 +86,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Canvas History
     function saveState() {
         undoStack.push(drawingCanvas.toDataURL());
-        if (undoStack.length > 20) undoStack.shift();
+        if (undoStack.length > 30) undoStack.shift();
         redoStack = [];
     }
 
@@ -136,29 +138,11 @@ document.addEventListener('DOMContentLoaded', () => {
         link.click();
     }
 
-    // Helper: check if a finger is extended
+    // ─── GESTURE DETECTION (Robust) ───
+
     function isFingerUp(landmarks, tipIdx, pipIdx) {
-        return landmarks[tipIdx].y < landmarks[pipIdx].y;
-    }
-
-    function isThumbUp(landmarks) {
-        // For right hand: thumb tip x > thumb ip x (pointing right/up)
-        // For left hand it's the opposite — but since we mirror the video, 
-        // we use a simpler heuristic: thumb tip is significantly above thumb IP
-        const thumbTip = landmarks[4];
-        const thumbIP = landmarks[3];
-        const thumbMCP = landmarks[2];
-        // Thumb is up if the tip is above its IP joint
-        return thumbTip.y < thumbIP.y && thumbTip.y < thumbMCP.y;
-    }
-
-    function countFingersUp(landmarks) {
-        let count = 0;
-        if (isFingerUp(landmarks, 8, 6)) count++;   // Index
-        if (isFingerUp(landmarks, 12, 10)) count++;  // Middle
-        if (isFingerUp(landmarks, 16, 14)) count++;  // Ring
-        if (isFingerUp(landmarks, 20, 18)) count++;  // Pinky
-        return count;
+        // A finger is "up" if the tip is above the PIP joint (lower y = higher on screen)
+        return landmarks[tipIdx].y < landmarks[pipIdx].y - 0.02;
     }
 
     function detectGesture(landmarks) {
@@ -166,34 +150,93 @@ document.addEventListener('DOMContentLoaded', () => {
         const middleUp = isFingerUp(landmarks, 12, 10);
         const ringUp = isFingerUp(landmarks, 16, 14);
         const pinkyUp = isFingerUp(landmarks, 20, 18);
-        const thumbUp = isThumbUp(landmarks);
 
-        const fingersUp = countFingersUp(landmarks);
+        // Count fingers (excluding thumb for simplicity)
+        let fingersUp = 0;
+        if (indexUp) fingersUp++;
+        if (middleUp) fingersUp++;
+        if (ringUp) fingersUp++;
+        if (pinkyUp) fingersUp++;
 
-        // Thumb up gesture: thumb extended, all other fingers closed
-        if (thumbUp && fingersUp === 0) {
+        // Thumb up gesture: thumb tip significantly above thumb MCP, all other fingers closed
+        const thumbTip = landmarks[4];
+        const thumbMCP = landmarks[2];
+        const thumbUp = (thumbTip.y < thumbMCP.y - 0.05) && fingersUp === 0;
+
+        if (thumbUp) {
             return 'action';
         }
 
-        // Erase: 3 or more fingers up (open hand / spread fingers)
+        // ERASE: 3 or more fingers raised (open hand)
         if (fingersUp >= 3) {
             return 'erase';
         }
 
-        // Move: exactly 2 fingers up (index + middle like a peace sign)
+        // MOVE: exactly 2 fingers up (index + middle, peace sign)
         if (fingersUp === 2 && indexUp && middleUp) {
             return 'move';
         }
 
-        // Draw: only index finger up
-        if (indexUp && fingersUp === 1) {
+        // DRAW: only index finger up
+        if (indexUp && !middleUp) {
             return 'draw';
         }
 
         return 'none';
     }
 
-    // Initialize MediaPipe Hands
+    // ─── CURSOR DRAWING ───
+
+    function drawCursor(x, y, gesture) {
+        outCtx.save();
+        // Reset transform since we want to draw in screen space
+        outCtx.setTransform(1, 0, 0, 1, 0, 0);
+
+        if (gesture === 'draw') {
+            // Small neon dot
+            outCtx.beginPath();
+            outCtx.arc(x, y, currentSize / 2 + 2, 0, Math.PI * 2);
+            outCtx.fillStyle = currentColor;
+            outCtx.shadowBlur = 20;
+            outCtx.shadowColor = currentColor;
+            outCtx.fill();
+        } else if (gesture === 'erase') {
+            // Big eraser circle
+            const eraseRadius = currentSize * 3;
+            outCtx.beginPath();
+            outCtx.arc(x, y, eraseRadius, 0, Math.PI * 2);
+            outCtx.strokeStyle = '#ff4444';
+            outCtx.lineWidth = 2;
+            outCtx.shadowBlur = 15;
+            outCtx.shadowColor = '#ff4444';
+            outCtx.stroke();
+            // X inside
+            outCtx.font = `${eraseRadius}px Outfit`;
+            outCtx.fillStyle = '#ff4444';
+            outCtx.textAlign = 'center';
+            outCtx.textBaseline = 'middle';
+            outCtx.fillText('✕', x, y);
+        } else if (gesture === 'move') {
+            // Move arrows icon
+            outCtx.beginPath();
+            outCtx.arc(x, y, 18, 0, Math.PI * 2);
+            outCtx.strokeStyle = '#00ffff';
+            outCtx.lineWidth = 2;
+            outCtx.shadowBlur = 15;
+            outCtx.shadowColor = '#00ffff';
+            outCtx.stroke();
+            outCtx.font = '20px Outfit';
+            outCtx.fillStyle = '#00ffff';
+            outCtx.textAlign = 'center';
+            outCtx.textBaseline = 'middle';
+            outCtx.fillText('✥', x, y);
+        }
+
+        outCtx.restore();
+    }
+
+    // ─── MEDIAPIPE SETUP ───
+
     const hands = new Hands({locateFile: (file) => {
         return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
     }});
@@ -207,7 +250,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     hands.onResults(onResults);
 
-    // Setup Camera
     const camera = new Camera(videoElement, {
         onFrame: async () => {
             await hands.send({image: videoElement});
@@ -217,7 +259,52 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     camera.start();
 
-    // Frame Processing
+    // ─── COORDINATE CALCULATION ───
+
+    function getScreenCoords(landmarks, results) {
+        const videoAspect = results.image.width / results.image.height;
+        const canvasAspect = outputCanvas.width / outputCanvas.height;
+        let drawWidth, drawHeight, offsetX, offsetY;
+
+        if (canvasAspect > videoAspect) {
+            drawWidth = outputCanvas.width;
+            drawHeight = outputCanvas.width / videoAspect;
+            offsetX = 0;
+            offsetY = (outputCanvas.height - drawHeight) / 2;
+        } else {
+            drawHeight = outputCanvas.height;
+            drawWidth = outputCanvas.height * videoAspect;
+            offsetX = (outputCanvas.width - drawWidth) / 2;
+            offsetY = 0;
+        }
+
+        // Mirror x for selfie view
+        const x = 1.0 - landmarks[8].x;
+        const y = landmarks[8].y;
+        
+        return {
+            x: offsetX + (x * drawWidth),
+            y: offsetY + (y * drawHeight)
+        };
+    }
+
+    // ─── STOP ACTIVE MODES ───
+
+    function stopAllModes() {
+        if (isDrawing || isErasing || isMoving) {
+            drawCtx.globalCompositeOperation = 'source-over';
+            saveState();
+        }
+        isDrawing = false;
+        isErasing = false;
+        isMoving = false;
+        lastPoint = null;
+        previousPoint = null;
+        moveAnchor = null;
+    }
+
+    // ─── MAIN FRAME HANDLER ───
+
     function onResults(results) {
         outCtx.save();
         outCtx.clearRect(0, 0, outputCanvas.width, outputCanvas.height);
@@ -230,24 +317,23 @@ document.addEventListener('DOMContentLoaded', () => {
         if (toggleCamera.checked) {
             const videoAspect = results.image.width / results.image.height;
             const canvasAspect = outputCanvas.width / outputCanvas.height;
-            let drawWidth, drawHeight, offsetX, offsetY;
+            let dW, dH, oX, oY;
 
             if (canvasAspect > videoAspect) {
-                drawWidth = outputCanvas.width;
-                drawHeight = outputCanvas.width / videoAspect;
-                offsetX = 0;
-                offsetY = (outputCanvas.height - drawHeight) / 2;
+                dW = outputCanvas.width;
+                dH = outputCanvas.width / videoAspect;
+                oX = 0;
+                oY = (outputCanvas.height - dH) / 2;
             } else {
-                drawHeight = outputCanvas.height;
-                drawWidth = outputCanvas.height * videoAspect;
-                offsetX = (outputCanvas.width - drawWidth) / 2;
-                offsetY = 0;
+                dH = outputCanvas.height;
+                dW = outputCanvas.height * videoAspect;
+                oX = (outputCanvas.width - dW) / 2;
+                oY = 0;
             }
             
-            outCtx.drawImage(results.image, offsetX, offsetY, drawWidth, drawHeight);
+            outCtx.drawImage(results.image, oX, oY, dW, dH);
         }
 
-        // Process landmarks
         let gesture = 'none';
         
         if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
@@ -259,53 +345,33 @@ document.addEventListener('DOMContentLoaded', () => {
                 drawLandmarks(outCtx, landmarks, {color: '#FF0000', lineWidth: 1, radius: 3});
             }
 
-            // Detect gesture using robust helper
+            outCtx.restore(); // Restore before drawing cursor in screen space
+
+            // Detect gesture
             gesture = detectGesture(landmarks);
+            const coords = getScreenCoords(landmarks, results);
+            const currentPoint = { x: coords.x, y: coords.y };
 
-            // Calculate screen coordinates from index fingertip
-            const videoAspect = results.image.width / results.image.height;
-            const canvasAspect = outputCanvas.width / outputCanvas.height;
-            let drawWidth, drawHeight, offsetX, offsetY;
+            // Draw cursor indicator
+            drawCursor(currentPoint.x, currentPoint.y, gesture);
 
-            if (canvasAspect > videoAspect) {
-                drawWidth = outputCanvas.width;
-                drawHeight = outputCanvas.width / videoAspect;
-                offsetX = 0;
-                offsetY = (outputCanvas.height - drawHeight) / 2;
-            } else {
-                drawHeight = outputCanvas.height;
-                drawWidth = outputCanvas.height * videoAspect;
-                offsetX = (outputCanvas.width - drawWidth) / 2;
-                offsetY = 0;
-            }
-
-            // Mirror x coordinate
-            const x = 1.0 - landmarks[8].x;
-            const y = landmarks[8].y;
-            
-            const screenX = offsetX + (x * drawWidth);
-            const screenY = offsetY + (y * drawHeight);
-            
-            const currentPoint = { x: screenX, y: screenY };
-
-            // Handle Action Trigger (thumb up = save)
+            // ── HANDLE ACTION (Thumb Up = Save)
             if (gesture === 'action' && lastGesture !== 'action' && !actionDebounce) {
                 actionDebounce = true;
                 saveCanvas();
                 setTimeout(() => { actionDebounce = false; }, 2000);
             }
 
-            // Handle Drawing
+            // ── HANDLE DRAW
             if (gesture === 'draw') {
+                if (isErasing || isMoving) stopAllModes();
+                
                 if (!isDrawing) {
                     isDrawing = true;
-                    isErasing = false;
                     lastPoint = currentPoint;
                     previousPoint = currentPoint;
                 } else {
                     setupDrawContext();
-                    drawCtx.globalCompositeOperation = 'source-over';
-                    
                     drawCtx.beginPath();
                     const midPoint = {
                         x: (lastPoint.x + currentPoint.x) / 2,
@@ -314,62 +380,61 @@ document.addEventListener('DOMContentLoaded', () => {
                     drawCtx.moveTo(previousPoint.x, previousPoint.y);
                     drawCtx.quadraticCurveTo(lastPoint.x, lastPoint.y, midPoint.x, midPoint.y);
                     drawCtx.stroke();
-
                     previousPoint = midPoint;
                     lastPoint = currentPoint;
                 }
             }
-            // Handle Erasing
+            // ── HANDLE ERASE (Open hand - wipes strokes away)
             else if (gesture === 'erase') {
+                if (isDrawing || isMoving) stopAllModes();
+                
                 if (!isErasing) {
                     isErasing = true;
-                    isDrawing = false;
                     lastPoint = currentPoint;
                     previousPoint = currentPoint;
                 } else {
+                    const eraseRadius = currentSize * 3;
+                    // Clear a circular area around the finger
+                    drawCtx.save();
                     drawCtx.globalCompositeOperation = 'destination-out';
-                    drawCtx.lineCap = 'round';
-                    drawCtx.lineJoin = 'round';
-                    drawCtx.lineWidth = currentSize * 5; // Large eraser
-                    drawCtx.shadowBlur = 0;
-                    
                     drawCtx.beginPath();
-                    const midPoint = {
-                        x: (lastPoint.x + currentPoint.x) / 2,
-                        y: (lastPoint.y + currentPoint.y) / 2
-                    };
-                    drawCtx.moveTo(previousPoint.x, previousPoint.y);
-                    drawCtx.quadraticCurveTo(lastPoint.x, lastPoint.y, midPoint.x, midPoint.y);
-                    drawCtx.stroke();
-
-                    previousPoint = midPoint;
+                    drawCtx.arc(currentPoint.x, currentPoint.y, eraseRadius, 0, Math.PI * 2);
+                    drawCtx.fill();
+                    drawCtx.restore();
+                    
                     lastPoint = currentPoint;
+                    previousPoint = currentPoint;
                 }
             }
-            // Move or other gestures — stop drawing/erasing
-            else {
-                if (isDrawing || isErasing) {
-                    isDrawing = false;
-                    isErasing = false;
-                    drawCtx.globalCompositeOperation = 'source-over';
-                    saveState();
+            // ── HANDLE MOVE (Peace sign - drags entire drawing)
+            else if (gesture === 'move') {
+                if (isDrawing || isErasing) stopAllModes();
+                
+                if (!isMoving) {
+                    isMoving = true;
+                    moveAnchor = currentPoint;
+                } else {
+                    const dx = currentPoint.x - moveAnchor.x;
+                    const dy = currentPoint.y - moveAnchor.y;
+                    
+                    // Only move if the delta is significant (avoids jitter)
+                    if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
+                        // Grab current canvas content
+                        const imageData = drawCtx.getImageData(0, 0, drawingCanvas.width, drawingCanvas.height);
+                        drawCtx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+                        drawCtx.putImageData(imageData, dx, dy);
+                        moveAnchor = currentPoint;
+                    }
                 }
-                lastPoint = null;
-                previousPoint = null;
+            }
+            // ── IDLE / NO GESTURE
+            else {
+                stopAllModes();
             }
         } else {
-            // No hands detected — stop everything
-            if (isDrawing || isErasing) {
-                isDrawing = false;
-                isErasing = false;
-                drawCtx.globalCompositeOperation = 'source-over';
-                saveState();
-            }
-            lastPoint = null;
-            previousPoint = null;
+            outCtx.restore();
+            stopAllModes();
         }
-        
-        outCtx.restore();
 
         // Update UI mode label
         if (gesture === 'draw') modeDisplay.textContent = 'Draw 🖌️';

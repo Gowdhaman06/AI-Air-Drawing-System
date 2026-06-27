@@ -225,8 +225,9 @@ document.addEventListener('DOMContentLoaded', () => {
             const thumb_up = thumb_tip.y < index_mcp.y && !index_up && !middle_up && !ring_up && !pinky_up;
 
             if (thumb_up) gesture = 'action';
-            else if (index_up && middle_up && ring_up && pinky_up) gesture = 'erase';
-            else if (index_up && !pinky_up) gesture = 'draw';
+            else if (index_up && middle_up && ring_up && pinky_up) gesture = 'move';
+            else if (index_up && middle_up && !ring_up && !pinky_up) gesture = 'erase';
+            else if (index_up && !middle_up && !ring_up && !pinky_up) gesture = 'draw';
 
             // Coordinates for drawing (Index finger tip)
             // Need to calculate screen position based on object-fit 'cover' scaling
@@ -262,14 +263,23 @@ document.addEventListener('DOMContentLoaded', () => {
                 setTimeout(() => { actionDebounce = false; }, 2000);
             }
 
-            // Handle Drawing
-            if (gesture === 'draw') {
+            // Handle Drawing and Erasing
+            if (gesture === 'draw' || gesture === 'erase') {
                 if (!isDrawing) {
                     isDrawing = true;
                     lastPoint = currentPoint;
                     previousPoint = currentPoint;
                 } else {
                     setupDrawContext();
+                    
+                    if (gesture === 'erase') {
+                        drawCtx.globalCompositeOperation = 'destination-out';
+                        drawCtx.lineWidth = currentSize * 3;
+                        drawCtx.shadowBlur = 0;
+                    } else {
+                        drawCtx.globalCompositeOperation = 'source-over';
+                    }
+                    
                     drawCtx.beginPath();
                     
                     const midPoint = {
@@ -287,6 +297,7 @@ document.addEventListener('DOMContentLoaded', () => {
             } else {
                 if (isDrawing) {
                     isDrawing = false;
+                    drawCtx.globalCompositeOperation = 'source-over';
                     saveState();
                 }
             }
@@ -302,7 +313,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Update UI
         if(gesture === 'draw') modeDisplay.textContent = 'Draw 🖌️';
-        else if(gesture === 'erase') modeDisplay.textContent = 'Move/Erase 🖐️';
+        else if(gesture === 'erase') modeDisplay.textContent = 'Erase 🧽';
+        else if(gesture === 'move') modeDisplay.textContent = 'Move 🖐️';
         else if(gesture === 'action') modeDisplay.textContent = 'Action 👍';
         else modeDisplay.textContent = 'Waiting...';
         
